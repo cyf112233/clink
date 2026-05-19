@@ -1,0 +1,13 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/central' }
+    }
+    dependencies {
+        def herRuntime = System.getenv('HER_RUNTIME') ?: '/her'
+        classpath fileTree(dir: "$herRuntime/toolchains/agp-7.4.2-classpath", include: ['*.jar'])
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.22'
+    }
+}

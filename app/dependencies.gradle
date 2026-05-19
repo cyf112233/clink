@@ -1,0 +1,30 @@
+/*
+ * 第三方依赖统一写在这里，verifyProjectBuild 会通过 assembleDebug 打包进 APK。
+ *
+ * Maven 示例：
+ *   deps.add("com.squareup.okhttp3:okhttp:4.12.0")
+ *
+ * 本地 JAR/AAR：
+ *   放入 app/libs/，默认 fileTree 已接入。
+ *
+ * native so：
+ *   放入 app/src/main/jniLibs/<abi>/，或由 AAR 自带。
+ */
+ext.generatedAppDependencies = [
+    'androidx.activity:activity-compose:1.7.2',
+    'androidx.compose.ui:ui:1.4.3',
+    'androidx.compose.ui:ui-tooling-preview:1.4.3',
+    'androidx.compose.material3:material3:1.1.1',
+    'androidx.compose.material:material-icons-extended:1.4.3',
+    'androidx.compose.foundation:foundation:1.4.3',
+    'androidx.compose.runtime:runtime:1.4.3',
+    'androidx.compose.ui:ui-tooling:1.4.3',
+    'androidx.navigation:navigation-compose:2.6.0'
+]
+ext.deps = generatedAppDependencies
+
+ext.addGeneratedAppDependencies = { p ->
+    generatedAppDependencies.each { dep ->
+        p.dependencies.add('implementation', dep)
+    }
+}
