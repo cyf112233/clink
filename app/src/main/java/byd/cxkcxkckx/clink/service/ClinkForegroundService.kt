@@ -17,13 +17,16 @@ import byd.cxkcxkckx.clink.core.DeviceItem
 import byd.cxkcxkckx.clink.core.FileCategory
 import byd.cxkcxkckx.clink.core.IncomingRequest
 import byd.cxkcxkckx.clink.core.PeerItem
+import byd.cxkcxkckx.clink.core.TransferDirection
 import byd.cxkcxkckx.clink.core.TransferItem
 import byd.cxkcxkckx.clink.core.TransferStatus
+import java.util.concurrent.ConcurrentHashMap
 
 class ClinkForegroundService : Service(), ClinkEngine.Callback, ClinkSession.Controller {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var engine: ClinkEngine
+    private val transferStatusCache = ConcurrentHashMap<String, TransferStatus>()
 
     override fun onCreate() {
         super.onCreate()
@@ -96,10 +99,7 @@ class ClinkForegroundService : Service(), ClinkEngine.Callback, ClinkSession.Con
 
     override fun onPeerDisconnected(id: String, reason: String) {
         mainHandler.post {
-            val index = ClinkSession.connectedPeers.indexOfFirst { it.id == id }
-            if (index >= 0) {
-                ClinkSession.connectedPeers[index] = ClinkSession.connectedPeers[index].copy(status = reason)
-            }
+            ClinkSession.connectedPeers.removeAll { it.id == id }
             ClinkSession.logs.add("连接断开：$id - $reason")
             updateNotification()
         }
@@ -134,12 +134,15 @@ class ClinkForegroundService : Service(), ClinkEngine.Callback, ClinkSession.Con
 
     override fun onTransferUpdated(transfer: TransferItem) {
         mainHandler.post {
+            val previousStatus = transferStatusCache[transfer.id]
             val index = ClinkSession.transfers.indexOfFirst { it.id == transfer.id }
             if (index >= 0) {
                 ClinkSession.transfers[index] = transfer
             } else {
                 ClinkSession.transfers.add(0, transfer)
             }
+            transferStatusCache[transfer.id] = transfer.status
+            maybeNotifyReceiveEvent(transfer, previousStatus)
             updateNotification()
         }
     }
@@ -155,6 +158,54 @@ class ClinkForegroundService : Service(), ClinkEngine.Callback, ClinkSession.Con
         manager.notify(NOTIFICATION_ID, buildNotification(text))
     }
 
+    private fun maybeNotifyReceiveEvent(transfer: TransferItem, previousStatus: TransferStatus?) {
+        if (transfer.direction != TransferDirection.RECEIVE) return
+        when {
+            transfer.status == TransferStatus.RUNNING && previousStatus == null -> {
+                showEventNotification(
+                    notificationId = transfer.id.hashCode(),
+                    title = "正在接收文件",
+                    text = "来自 ${transfer.peerName}：${transfer.fileName}"
+                )
+                Toast.makeText(applicationContext, "正在接收：${transfer.fileName}", Toast.LENGTH_SHORT).show()
+            }
+            transfer.status == TransferStatus.COMPLETED && previousStatus != TransferStatus.COMPLETED -> {
+                showEventNotification(
+                    notificationId = transfer.id.hashCode(),
+                    title = "文件接收完成",
+                    text = "${transfer.fileName} 已保存到下载目录"
+                )
+                Toast.makeText(applicationContext, "接收完成：${transfer.fileName}", Toast.LENGTH_SHORT).show()
+                transferStatusCache.remove(transfer.id)
+            }
+            transfer.status == TransferStatus.FAILED && previousStatus != TransferStatus.FAILED -> {
+                showEventNotification(
+                    notificationId = transfer.id.hashCode(),
+                    title = "文件接收失败",
+                    text = transfer.message.ifBlank { transfer.fileName }
+                )
+                transferStatusCache.remove(transfer.id)
+            }
+            transfer.status == TransferStatus.CANCELED && previousStatus != TransferStatus.CANCELED -> {
+                transferStatusCache.remove(transfer.id)
+            }
+        }
+    }
+
+    private fun showEventNotification(notificationId: Int, title: String, text: String) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(
+            notificationId,
+            NotificationCompat.Builder(this, EVENT_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .build()
+        )
+    }
+
     private fun buildNotification(text: String) = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(android.R.drawable.stat_sys_upload)
         .setContentTitle("clink 后台服务")
@@ -166,13 +217,16 @@ class ClinkForegroundService : Service(), ClinkEngine.Callback, ClinkSession.Con
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val channel = NotificationChannel(CHANNEL_ID, "clink 后台服务", NotificationManager.IMPORTANCE_LOW)
-            manager.createNotificationChannel(channel)
+            val serviceChannel = NotificationChannel(CHANNEL_ID, "clink 后台服务", NotificationManager.IMPORTANCE_LOW)
+            val eventChannel = NotificationChannel(EVENT_CHANNEL_ID, "clink 传输通知", NotificationManager.IMPORTANCE_DEFAULT)
+            manager.createNotificationChannel(serviceChannel)
+            manager.createNotificationChannel(eventChannel)
         }
     }
 
     companion object {
         private const val CHANNEL_ID = "clink_foreground"
+        private const val EVENT_CHANNEL_ID = "clink_events"
         private const val NOTIFICATION_ID = 1001
     }
 }
